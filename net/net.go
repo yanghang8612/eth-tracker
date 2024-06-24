@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	EthJsonRpcEndpoint = "https://mainnet.infura.io/v3/4e3e97c4d22b45e2a3729d31cd338c15"
+	EthJsonRpcEndpoint = "http://localhost:8545/"
 	EtherScan          = "https://api.etherscan.io/"
 )
 
