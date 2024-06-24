@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"eth-tracker/db"
@@ -23,9 +26,21 @@ func main() {
 		return fmt.Sprintf("Tracked [%d] ETH blocks in [%.2fs], speed [%.2fblks/s]", rs.CountInc, rs.ElapsedTime, float64(rs.CountInc)/rs.ElapsedTime)
 	})
 
-	for {
-		doTrackEthUSDT()
-	}
+	go func() {
+		for {
+			doTrackEthUSDT()
+		}
+	}()
+
+	watchOSSignal(database)
+}
+
+func watchOSSignal(database *db.Database) {
+	c := make(chan os.Signal)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+	<-c
+
+	database.Close()
 }
 
 func doTrackEthUSDT() {

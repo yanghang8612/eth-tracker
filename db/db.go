@@ -126,6 +126,13 @@ func (db *Database) loadUsers() {
 	fmt.Printf("Loaded [%d] of [%d] users from db\n", len(db.users), result.RowsAffected)
 }
 
+func (db *Database) Close() {
+	db.flushUserToDB(true)
+
+	underDB, _ := db.db.DB()
+	_ = underDB.Close()
+}
+
 func (db *Database) GetLastTrackedEthBlockNum() uint64 {
 	return db.lastTrackedBlockNum
 }
