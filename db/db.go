@@ -185,7 +185,7 @@ func (db *Database) ProcessEthUSDTTransferLog(log types.Log) {
 	}
 
 	if amount == 0 {
-		return
+		goto finish
 	}
 
 	if !emptyFrom {
@@ -227,6 +227,7 @@ func (db *Database) ProcessEthUSDTTransferLog(log types.Log) {
 		db.flushUserToDB(false)
 	}
 
+finish:
 	if log.BlockNumber != db.lastTrackedBlockNum {
 		db.SetLastTrackedBlockNum(log.BlockNumber)
 	}
