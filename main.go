@@ -18,7 +18,7 @@ var (
 
 	reporter *utils.Reporter
 
-	quitCh chan struct{}
+	quitCh = make(chan struct{})
 )
 
 func main() {

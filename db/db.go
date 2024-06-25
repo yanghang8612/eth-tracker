@@ -250,12 +250,13 @@ finish:
 }
 
 func (db *Database) hasUSDTUser(addr common.Address) bool {
+	if _, ok := db.users[addr]; ok {
+		return true
+	}
+
 	db.TotalTestCount += 1
 	if db.usersFilter.Test(addr.Bytes()) {
 		db.TotalMatchedCount += 1
-		if _, ok := db.users[addr]; ok {
-			return true
-		}
 
 		user := &model.USDTUser{Address: addr.Hex()}
 		result := db.db.First(user)
