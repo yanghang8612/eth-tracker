@@ -17,6 +17,8 @@ var (
 	database *db.Database
 
 	reporter *utils.Reporter
+
+	quitCh chan struct{}
 )
 
 func main() {
@@ -28,19 +30,25 @@ func main() {
 
 	go func() {
 		for {
-			doTrackEthUSDT()
+			select {
+			case <-quitCh:
+				fmt.Println("Quit signal received")
+				database.Close()
+			default:
+				doTrackEthUSDT()
+			}
 		}
 	}()
 
-	watchOSSignal(database)
+	watchOSSignal()
 }
 
-func watchOSSignal(database *db.Database) {
+func watchOSSignal() {
 	c := make(chan os.Signal)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	<-c
 
-	database.Close()
+	close(quitCh)
 }
 
 func doTrackEthUSDT() {
@@ -100,7 +108,7 @@ func doTrackEthUSDT() {
 	if shouldReport, reportContent := reporter.Add(int(n)); shouldReport {
 		nowBlockNumber, _ := net.EthBlockNumber()
 		trackedBlockNumber := database.GetLastTrackedEthBlockNum()
-		fmt.Printf("%s, tracking from [%d] to [%d], left [%d], current total/to_flush users [%d/%d]\n",
-			reportContent, trackedBlockNumber, nowBlockNumber, nowBlockNumber-trackedBlockNumber, database.GetUsersCount(), database.GetUsersToFlushCount())
+		fmt.Printf("%s, now tracking [%d], left [%d] blks, current total/to_flush users [%d/%d], filter [%d/%d]\n",
+			reportContent, trackedBlockNumber, nowBlockNumber-trackedBlockNumber, database.GetUsersCount(), database.GetUsersToFlushCount(), database.TotalTestCount, database.TotalMatchedCount)
 	}
 }

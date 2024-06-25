@@ -53,6 +53,9 @@ type Database struct {
 	usersFilter *bloom.BloomFilter
 	flushCount  int
 	USDTDayStat *model.ERC20Statistic
+
+	TotalTestCount    uint64
+	TotalMatchedCount uint64
 }
 
 func New() *Database {
@@ -247,7 +250,9 @@ finish:
 }
 
 func (db *Database) hasUSDTUser(addr common.Address) bool {
+	db.TotalTestCount += 1
 	if db.usersFilter.Test(addr.Bytes()) {
+		db.TotalMatchedCount += 1
 		if _, ok := db.users[addr]; ok {
 			return true
 		}
@@ -294,7 +299,7 @@ func (db *Database) flushUserToDB(force bool) {
 	}
 	db.db.Save(usersToSave)
 	savedCount += len(usersToSave)
-	fmt.Printf("Finish saving [%d] users, total %d\n", savedCount, len(db.users))
+	fmt.Printf("Finish saving [%d] users, left %d\n", savedCount, len(db.users))
 }
 
 func (db *Database) updateDayStat(blockNum uint64) {
