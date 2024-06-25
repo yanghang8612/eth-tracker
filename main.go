@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,6 +19,8 @@ var (
 
 	reporter *utils.Reporter
 
+	loopWG sync.WaitGroup
+
 	quitCh = make(chan struct{})
 )
 
@@ -28,12 +31,14 @@ func main() {
 		return fmt.Sprintf("Tracked [%d] ETH blocks in [%.2fs], speed [%.2fblks/s]", rs.CountInc, rs.ElapsedTime, float64(rs.CountInc)/rs.ElapsedTime)
 	})
 
+	loopWG.Add(1)
 	go func() {
 		for {
 			select {
 			case <-quitCh:
 				fmt.Println("Quit signal received")
 				database.Close()
+				loopWG.Done()
 			default:
 				doTrackEthUSDT()
 			}
@@ -49,6 +54,7 @@ func watchOSSignal() {
 	<-c
 
 	close(quitCh)
+	loopWG.Wait()
 }
 
 func doTrackEthUSDT() {
