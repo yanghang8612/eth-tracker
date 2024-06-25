@@ -229,8 +229,8 @@ func (db *Database) ProcessEthUSDTTransferLog(log types.Log) {
 		db.users[to].Amount += amount
 		db.users[to].TransferIn += 1
 
-		if db.users[from].ShouldFlushIntoDB {
-			db.users[from].ShouldFlushIntoDB = false
+		if db.users[to].ShouldFlushIntoDB {
+			db.users[to].ShouldFlushIntoDB = false
 			db.flushCount -= 1
 		}
 	}
