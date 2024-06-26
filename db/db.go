@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"math/big"
+	"sort"
 	"strconv"
 	"time"
 
@@ -49,13 +50,16 @@ type Database struct {
 	lastTrackedBlockNum   uint64
 	nextDaysStartBlockNum uint64
 
-	users       map[common.Address]*model.USDTUser
-	usersFilter *bloom.BloomFilter
-	flushCount  int
-	USDTDayStat *model.ERC20Statistic
+	users                  map[common.Address]*model.USDTUser
+	usersFilter            *bloom.BloomFilter
+	userCountWithNoBalance int
+
+	historicalHolder int
+	dayStatOfUSDT    *model.ERC20Statistic
 
 	TotalTestCount    uint64
 	TotalMatchedCount uint64
+	TotalReloadCount  uint64
 }
 
 func New() *Database {
@@ -73,14 +77,19 @@ func New() *Database {
 		panic(dbErr)
 	}
 
+	dbErr = db.AutoMigrate(&model.ERC20Statistic{})
+	if dbErr != nil {
+		panic(dbErr)
+	}
+
 	dbErr = db.AutoMigrate(&model.Meta{})
 	if dbErr != nil {
 		panic(dbErr)
 	}
 
-	var trackedEthBlockNumMeta model.Meta
-	db.Where(model.Meta{Key: model.TrackedEthBlockNumKey}).Attrs(model.Meta{Val: strconv.Itoa(4634748)}).FirstOrCreate(&trackedEthBlockNumMeta)
-	trackedBlockNum, _ := strconv.Atoi(trackedEthBlockNumMeta.Val)
+	var trackedBlockNumMeta model.Meta
+	db.Where(model.Meta{Key: model.TrackedBlockNumKey}).Attrs(model.Meta{Val: strconv.Itoa(4634748)}).FirstOrCreate(&trackedBlockNumMeta)
+	trackedBlockNum, _ := strconv.Atoi(trackedBlockNumMeta.Val)
 
 	database := &Database{
 		db: db,
@@ -130,7 +139,7 @@ func (db *Database) loadUsers() {
 }
 
 func (db *Database) Close() {
-	db.flushUserToDB(true)
+	db.flushUsersToDB(true)
 
 	underDB, _ := db.db.DB()
 	_ = underDB.Close()
@@ -144,8 +153,14 @@ func (db *Database) GetUsersCount() int {
 	return len(db.users)
 }
 
-func (db *Database) GetUsersToFlushCount() int {
-	return db.flushCount
+func (db *Database) GetUserCountWithNoBalance() int {
+	return db.userCountWithNoBalance
+}
+
+func (db *Database) GetERC20DayStat(date string) (bool, model.ERC20Statistic) {
+	var dayStat model.ERC20Statistic
+	result := db.db.Where("date = ?", date).First(dayStat)
+	return result.Error == nil, dayStat
 }
 
 func (db *Database) SetLastTrackedBlockNum(blockNum uint64) {
@@ -158,9 +173,10 @@ func (db *Database) SetLastTrackedBlockNum(blockNum uint64) {
 				actualHolders += 1
 			}
 		}
-		db.USDTDayStat.HistoricalHolder = len(db.users)
-		db.USDTDayStat.ActualHolder = actualHolders
-		db.db.Save(db.USDTDayStat)
+		db.historicalHolder += db.dayStatOfUSDT.NewTo
+		db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
+		db.dayStatOfUSDT.ActualHolder = actualHolders
+		db.db.Save(db.dayStatOfUSDT)
 
 		db.updateDayStat(blockNum)
 	}
@@ -206,15 +222,16 @@ func (db *Database) ProcessEthUSDTTransferLog(log types.Log) {
 
 		// New from user should exist in memory, because he must have balance
 		if !emptyTo && db.users[from].TransferOut == 0 {
-			db.USDTDayStat.NewFrom += 1
+			db.dayStatOfUSDT.NewFrom += 1
 		}
 
 		db.users[from].Amount -= amount
 		db.users[from].TransferOut += 1
+		db.users[from].LastUpdateAt = log.BlockNumber
 
 		if db.users[from].Amount == 0 && !db.users[from].ShouldFlushIntoDB {
 			db.users[from].ShouldFlushIntoDB = true
-			db.flushCount += 1
+			db.userCountWithNoBalance += 1
 		}
 
 		if db.users[from].Amount < 0 {
@@ -226,21 +243,21 @@ func (db *Database) ProcessEthUSDTTransferLog(log types.Log) {
 		if !db.hasUSDTUser(to) {
 			db.users[to] = &model.USDTUser{}
 			db.usersFilter.Add(to.Bytes())
-			db.USDTDayStat.NewTo += 1
+			db.dayStatOfUSDT.NewTo += 1
 		}
 
 		db.users[to].Amount += amount
 		db.users[to].TransferIn += 1
+		db.users[to].LastUpdateAt = log.BlockNumber
 
 		if db.users[to].ShouldFlushIntoDB {
 			db.users[to].ShouldFlushIntoDB = false
-			db.flushCount -= 1
+			db.userCountWithNoBalance -= 1
 		}
 	}
 
-	if db.flushCount >= 1_000_000 {
-		db.flushUserToDB(false)
-		db.flushCount = 0
+	if db.userCountWithNoBalance >= 2_000_000 {
+		db.userCountWithNoBalance = db.flushUsersToDB(false)
 	}
 
 finish:
@@ -264,35 +281,70 @@ func (db *Database) hasUSDTUser(addr common.Address) bool {
 		if result.Error == nil {
 			db.users[addr] = user
 			db.users[addr].Address = ""
+			db.TotalReloadCount += 1
 			return true
 		}
 	}
 	return false
 }
 
-func (db *Database) flushUserToDB(force bool) {
+func (db *Database) flushUsersToDB(force bool) int {
+	usersToSave := make([]*model.USDTUser, 0)
+
 	if force {
-		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedEthBlockNumKey}).Update("val", strconv.Itoa(int(db.lastTrackedBlockNum)))
+		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedBlockNumKey}).Update("val", strconv.Itoa(int(db.lastTrackedBlockNum)))
+		db.dayStatOfUSDT.Date = "-"
+		db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
+		db.db.Save(db.dayStatOfUSDT)
+
+		for addr, user := range db.users {
+			user.Address = addr.Hex()
+			usersToSave = append(usersToSave, user)
+		}
+		db.saveUsers(usersToSave)
+
+		return 0
 	}
 
-	fmt.Printf("Start saving users to DB, total [%d]\n", len(db.users))
+	usersWithNoBalance := make([]*model.USDTUser, 0)
+	for addr, user := range db.users {
+		if user.Amount == 0 {
+			user.Address = addr.Hex()
+			usersWithNoBalance = append(usersWithNoBalance, user)
+		}
+	}
+
+	sort.Slice(usersWithNoBalance, func(i, j int) bool {
+		return usersWithNoBalance[i].LastUpdateAt < usersWithNoBalance[j].LastUpdateAt
+	})
+
+	for i := 0; i < 1_000_000; i++ {
+		usersToSave = append(usersToSave, usersWithNoBalance[i])
+		delete(db.users, common.HexToAddress(usersWithNoBalance[i].Address))
+	}
+
+	db.db.Save(usersToSave)
+
+	for i := 1_000_000; i < len(usersWithNoBalance); i++ {
+		usersWithNoBalance[i].Address = ""
+	}
+
+	return len(usersToSave) - 1_000_000
+}
+
+func (db *Database) saveUsers(users []*model.USDTUser) {
+	fmt.Printf("Start saving users to DB, total [%d]\n", len(users))
 
 	savedCount := 0
 	usersToSave := make([]*model.USDTUser, 0)
-	for addr, user := range db.users {
-		// If user has clean, then skip them
-		if !force && user.Amount > 0 {
-			continue
-		}
 
-		user.Address = addr.Hex()
+	for _, user := range users {
 		usersToSave = append(usersToSave, user)
 		if len(usersToSave) == 100 {
 			db.db.Save(usersToSave)
 			usersToSave = make([]*model.USDTUser, 0)
 		}
 		savedCount += 1
-		delete(db.users, addr)
 
 		if savedCount%200_000 == 0 {
 			fmt.Printf("Saved %d users to DB\n", savedCount)
@@ -300,16 +352,21 @@ func (db *Database) flushUserToDB(force bool) {
 	}
 	db.db.Save(usersToSave)
 	savedCount += len(usersToSave)
-	fmt.Printf("Finish saving [%d] users, left %d\n", savedCount, len(db.users))
+	fmt.Printf("Finish saving [%d] users", savedCount)
 }
 
 func (db *Database) updateDayStat(blockNum uint64) {
 	header, _ := net.EthGetHeaderByNumber(blockNum)
 	date := generateDate(int64(header.Time))
 
-	db.USDTDayStat = &model.ERC20Statistic{
-		Date:    date,
-		Address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+	if ok, unfinishedDayStat := db.GetERC20DayStat("-"); ok {
+		db.historicalHolder = unfinishedDayStat.HistoricalHolder
+		db.dayStatOfUSDT = &unfinishedDayStat
+	} else {
+		db.dayStatOfUSDT = &model.ERC20Statistic{
+			Date:    date,
+			Address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+		}
 	}
 
 	ts, _ := time.Parse("060102", date)
@@ -318,7 +375,7 @@ func (db *Database) updateDayStat(blockNum uint64) {
 	for i := 0; i < 3; i++ {
 		result, _ := net.EthBlockNumberByTime(nextDay.Unix())
 		if result == 0 {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(1 * time.Second)
 		} else {
 			nextDayBlockNum = result
 			break

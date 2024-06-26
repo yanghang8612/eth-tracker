@@ -114,7 +114,7 @@ func doTrackEthUSDT() {
 	if shouldReport, reportContent := reporter.Add(int(n)); shouldReport {
 		nowBlockNumber, _ := net.EthBlockNumber()
 		trackedBlockNumber := database.GetLastTrackedEthBlockNum()
-		fmt.Printf("%s, now tracking [%d], left [%d] blks, current total/to_flush users [%d/%d], filter [%d/%d]\n",
-			reportContent, trackedBlockNumber, nowBlockNumber-trackedBlockNumber, database.GetUsersCount(), database.GetUsersToFlushCount(), database.TotalTestCount, database.TotalMatchedCount)
+		fmt.Printf("%s, now tracking [%d], left [%d] blks, current total/zero users [%d/%d], filter [%d/%d/%d]\n",
+			reportContent, trackedBlockNumber, nowBlockNumber-trackedBlockNumber, database.GetUsersCount(), database.GetUserCountWithNoBalance(), database.TotalTestCount, database.TotalMatchedCount, database.TotalReloadCount)
 	}
 }

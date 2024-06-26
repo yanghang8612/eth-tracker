@@ -6,7 +6,8 @@ type USDTUser struct {
 	Amount            uint64 `gorm:"index"`
 	TransferIn        uint
 	TransferOut       uint
-	ShouldFlushIntoDB bool `gorm:"-:all"`
+	ShouldFlushIntoDB bool   `gorm:"-:all"`
+	LastUpdateAt      uint64 `gorm:"-:all"`
 }
 
 func (e *USDTUser) Add(o *USDTUser) {

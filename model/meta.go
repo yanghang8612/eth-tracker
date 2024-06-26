@@ -3,7 +3,7 @@ package model
 import "gorm.io/gorm"
 
 const (
-	TrackedEthBlockNumKey = "tracked_eth_block_num"
+	TrackedBlockNumKey = "tracked_block_num"
 )
 
 type Meta struct {
