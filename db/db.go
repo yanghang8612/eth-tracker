@@ -323,13 +323,13 @@ func (db *Database) flushUsersToDB(force bool) int {
 		delete(db.users, common.HexToAddress(usersWithNoBalance[i].Address))
 	}
 
-	db.db.Save(usersToSave)
+	db.saveUsers(usersToSave)
 
 	for i := 1_000_000; i < len(usersWithNoBalance); i++ {
 		usersWithNoBalance[i].Address = ""
 	}
 
-	return len(usersToSave) - 1_000_000
+	return len(usersWithNoBalance) - 1_000_000
 }
 
 func (db *Database) saveUsers(users []*model.USDTUser) {
