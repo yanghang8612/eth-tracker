@@ -47,15 +47,15 @@ type TokenHistoricalHolder struct {
 type Database struct {
 	db *gorm.DB
 
-	lastTrackedBlockNum   uint64
-	nextDaysStartBlockNum uint64
+	lastTrackedBlockNum  uint64
+	nextDayStartBlockNum uint64
 
 	users                  map[common.Address]*model.USDTUser
 	usersFilter            *bloom.BloomFilter
 	userCountWithNoBalance int
 
 	historicalHolder int
-	dayStatOfUSDT    *model.ERC20Statistic
+	dayStatOfUSDT    model.ERC20Statistic
 
 	TotalTestCount    uint64
 	TotalMatchedCount uint64
@@ -91,10 +91,15 @@ func New() *Database {
 	db.Where(model.Meta{Key: model.TrackedBlockNumKey}).Attrs(model.Meta{Val: strconv.Itoa(4634748)}).FirstOrCreate(&trackedBlockNumMeta)
 	trackedBlockNum, _ := strconv.Atoi(trackedBlockNumMeta.Val)
 
+	var nextDayStartBlockNumMeta model.Meta
+	db.Where(model.Meta{Key: model.NextDayStartBlockNum}).Attrs(model.Meta{Val: strconv.Itoa(4640667)}).FirstOrCreate(&nextDayStartBlockNumMeta)
+	nextDayStartBlockNum, _ := strconv.Atoi(nextDayStartBlockNumMeta.Val)
+
 	database := &Database{
 		db: db,
 
-		lastTrackedBlockNum: uint64(trackedBlockNum),
+		lastTrackedBlockNum:  uint64(trackedBlockNum),
+		nextDayStartBlockNum: uint64(nextDayStartBlockNum),
 
 		users:       make(map[common.Address]*model.USDTUser),
 		usersFilter: bloom.NewWithEstimates(40_000_000, 0.02),
@@ -105,8 +110,15 @@ func New() *Database {
 		database.users[common.HexToAddress("0x36928500bc1dcd7af6a2b4008875cc336b927d57")] = &model.USDTUser{
 			Amount: 100000000000,
 		}
+		database.dayStatOfUSDT = model.ERC20Statistic{
+			Date:    "171128",
+			Address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+		}
+	} else {
+		database.dayStatOfUSDT = database.GetERC20DayStat("-")
+		database.historicalHolder = database.dayStatOfUSDT.HistoricalHolder
 	}
-	database.updateDayStat(database.lastTrackedBlockNum)
+	database.SetLastTrackedBlockNum(database.lastTrackedBlockNum)
 
 	return database
 }
@@ -157,28 +169,35 @@ func (db *Database) GetUserCountWithNoBalance() int {
 	return db.userCountWithNoBalance
 }
 
-func (db *Database) GetERC20DayStat(date string) (bool, model.ERC20Statistic) {
+func (db *Database) GetERC20DayStat(date string) model.ERC20Statistic {
 	var dayStat model.ERC20Statistic
-	result := db.db.Where("date = ?", date).First(dayStat)
-	return result.Error == nil, dayStat
+	db.db.Where("date = ?", date).First(dayStat)
+	return dayStat
 }
 
 func (db *Database) SetLastTrackedBlockNum(blockNum uint64) {
 	db.lastTrackedBlockNum = blockNum
 
-	if blockNum >= db.nextDaysStartBlockNum {
-		actualHolders := 0
-		for _, user := range db.users {
-			if user.Amount > 0 {
-				actualHolders += 1
-			}
-		}
-		db.historicalHolder += db.dayStatOfUSDT.NewTo
-		db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
-		db.dayStatOfUSDT.ActualHolder = actualHolders
-		db.db.Save(db.dayStatOfUSDT)
+	if blockNum >= db.nextDayStartBlockNum { // Catching up
+		currentDay := db.updateDayStat()
 
-		db.updateDayStat(blockNum)
+		// If we catch up with the current day, we should mark next day's start block number to max
+		if currentDay.Format("060102") == time.Now().Format("060102") {
+			db.nextDayStartBlockNum = 0xffffffffffffffff
+			fmt.Printf("Catch up to today [%s]\n", currentDay)
+			return
+		}
+
+		nextDayStartBlockNum, _ := net.EthBlockNumberByTime(currentDay.Unix())
+		db.nextDayStartBlockNum = nextDayStartBlockNum
+		fmt.Printf("Current day [%s] end block num [%d]\n", currentDay.Format("060102"), nextDayStartBlockNum)
+	} else { // Caught up
+		header, _ := net.EthGetHeaderByNumber(blockNum)
+		date := generateDate(int64(header.Time))
+
+		if date != db.dayStatOfUSDT.Date {
+			db.updateDayStat()
+		}
 	}
 }
 
@@ -293,6 +312,7 @@ func (db *Database) flushUsersToDB(force bool) int {
 
 	if force {
 		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedBlockNumKey}).Update("val", strconv.Itoa(int(db.lastTrackedBlockNum)))
+		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.NextDayStartBlockNum}).Update("val", strconv.Itoa(int(db.nextDayStartBlockNum)))
 		db.dayStatOfUSDT.Date = "-"
 		db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
 		db.db.Save(db.dayStatOfUSDT)
@@ -355,35 +375,25 @@ func (db *Database) saveUsers(users []*model.USDTUser) {
 	fmt.Printf("Finish saving [%d] users", savedCount)
 }
 
-func (db *Database) updateDayStat(blockNum uint64) {
-	header, _ := net.EthGetHeaderByNumber(blockNum)
-	date := generateDate(int64(header.Time))
-
-	if ok, unfinishedDayStat := db.GetERC20DayStat("-"); ok {
-		db.historicalHolder = unfinishedDayStat.HistoricalHolder
-		db.dayStatOfUSDT = &unfinishedDayStat
-	} else {
-		db.dayStatOfUSDT = &model.ERC20Statistic{
-			Date:    date,
-			Address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+func (db *Database) updateDayStat() time.Time {
+	db.historicalHolder += db.dayStatOfUSDT.NewTo
+	db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
+	for _, user := range db.users {
+		if user.Amount > 0 {
+			db.dayStatOfUSDT.ActualHolder += 1
 		}
 	}
+	db.db.Save(db.dayStatOfUSDT)
 
-	ts, _ := time.Parse("060102", date)
-	nextDay := ts.AddDate(0, 0, 1)
-	nextDayBlockNum := uint64(0)
-	for i := 0; i < 3; i++ {
-		result, _ := net.EthBlockNumberByTime(nextDay.Unix())
-		if result == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			nextDayBlockNum = result
-			break
-		}
+	lastDay, _ := time.Parse("060102", db.dayStatOfUSDT.Date)
+	currentDay := lastDay.AddDate(0, 0, 1)
+
+	db.dayStatOfUSDT = model.ERC20Statistic{
+		Date:    currentDay.Format("060102"),
+		Address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
 	}
 
-	db.nextDaysStartBlockNum = nextDayBlockNum
-	fmt.Printf("Next day [%s] start eth block num [%d]\n", nextDay.Format("060102"), nextDayBlockNum)
+	return currentDay
 }
 
 func generateDate(ts int64) string {

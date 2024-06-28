@@ -3,6 +3,7 @@ package net
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"strconv"
 
@@ -19,8 +20,9 @@ const (
 )
 
 var (
-	client    = resty.New()
-	ethClient *ethclient.Client
+	client     = resty.New()
+	ethClient  *ethclient.Client
+	FutureTime = errors.New("future time")
 )
 
 func init() {
@@ -60,7 +62,7 @@ func EthBlockNumberByTime(timestamp int64) (uint64, error) {
 			}
 			return blockNumber, nil
 		} else {
-			return 0, ethereum.NotFound
+			return 0, FutureTime
 		}
 	}
 }
