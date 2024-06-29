@@ -383,7 +383,7 @@ func (db *Database) updateDayStat() time.Time {
 			db.dayStatOfUSDT.ActualHolder += 1
 		}
 	}
-	db.db.Save(db.dayStatOfUSDT)
+	db.db.Save(&db.dayStatOfUSDT)
 
 	lastDay, _ := time.Parse("060102", db.dayStatOfUSDT.Date)
 	currentDay := lastDay.AddDate(0, 0, 1)
