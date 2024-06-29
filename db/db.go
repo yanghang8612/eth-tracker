@@ -102,7 +102,7 @@ func New() *Database {
 		nextDayStartBlockNum: uint64(nextDayStartBlockNum),
 
 		users:       make(map[common.Address]*model.USDTUser),
-		usersFilter: bloom.NewWithEstimates(40_000_000, 0.02),
+		usersFilter: bloom.NewWithEstimates(50_000_000, 0.02),
 	}
 
 	database.loadUsers()
@@ -118,7 +118,6 @@ func New() *Database {
 		database.dayStatOfUSDT = database.GetERC20DayStat("-")
 		database.historicalHolder = database.dayStatOfUSDT.HistoricalHolder
 	}
-	database.SetLastTrackedBlockNum(database.lastTrackedBlockNum)
 
 	return database
 }
