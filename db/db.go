@@ -187,7 +187,7 @@ func (db *Database) SetLastTrackedBlockNum(blockNum uint64) {
 			return
 		}
 
-		nextDayStartBlockNum, _ := net.EthBlockNumberByTime(currentDay.Unix())
+		nextDayStartBlockNum, _ := net.EthBlockNumberByTime(currentDay.AddDate(0, 0, 1).Unix())
 		db.nextDayStartBlockNum = nextDayStartBlockNum
 		fmt.Printf("Current day [%s] end block num [%d]\n", currentDay.Format("060102"), nextDayStartBlockNum)
 	} else { // Caught up
