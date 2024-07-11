@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -64,7 +65,10 @@ func EthBlockNumberByTime(timestamp int64) (uint64, error) {
 			return blockNumber, nil
 		} else {
 			fmt.Printf("Etherscan error: %s - %s\n", respStruct.Message, respStruct.Result)
-			return 0, FutureTime
+			if strings.Contains(respStruct.Message, "future") {
+				return 0, FutureTime
+			}
+			return 0, errors.New(respStruct.Result)
 		}
 	}
 }

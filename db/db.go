@@ -165,11 +165,9 @@ func (db *Database) buildEndBlockNumMap() {
 		} else if errors.Is(err, net.FutureTime) {
 			return
 		} else {
-			fmt.Printf("Error when build start block num map: %s\n", err.Error())
-			time.Sleep(1 * time.Second)
+			time.Sleep(200 * time.Millisecond)
 		}
 	}
-
 }
 
 func (db *Database) Close() {
