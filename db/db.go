@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"sort"
@@ -47,8 +48,9 @@ type TokenHistoricalHolder struct {
 type Database struct {
 	db *gorm.DB
 
-	lastTrackedBlockNum  uint64
-	nextDayStartBlockNum uint64
+	trackedBlockNum uint64
+	trackedDate     string
+	endBlockNumMap  map[string]uint64
 
 	users                  map[common.Address]*model.USDTUser
 	usersFilter            *bloom.BloomFilter
@@ -91,22 +93,22 @@ func New() *Database {
 	db.Where(model.Meta{Key: model.TrackedBlockNumKey}).Attrs(model.Meta{Val: strconv.Itoa(4634748)}).FirstOrCreate(&trackedBlockNumMeta)
 	trackedBlockNum, _ := strconv.Atoi(trackedBlockNumMeta.Val)
 
-	var nextDayStartBlockNumMeta model.Meta
-	db.Where(model.Meta{Key: model.NextDayStartBlockNum}).Attrs(model.Meta{Val: strconv.Itoa(4640667)}).FirstOrCreate(&nextDayStartBlockNumMeta)
-	nextDayStartBlockNum, _ := strconv.Atoi(nextDayStartBlockNumMeta.Val)
+	var trackedDateMeta model.Meta
+	db.Where(model.Meta{Key: model.TrackedDateKey}).Attrs(model.Meta{Val: "171128"}).FirstOrCreate(&trackedDateMeta)
 
 	database := &Database{
 		db: db,
 
-		lastTrackedBlockNum:  uint64(trackedBlockNum),
-		nextDayStartBlockNum: uint64(nextDayStartBlockNum),
+		trackedBlockNum: uint64(trackedBlockNum),
+		trackedDate:     trackedDateMeta.Val,
+		endBlockNumMap:  make(map[string]uint64),
 
 		users:       make(map[common.Address]*model.USDTUser),
 		usersFilter: bloom.NewWithEstimates(50_000_000, 0.02),
 	}
 
 	database.loadUsers()
-	if database.lastTrackedBlockNum == 4634748 {
+	if database.trackedBlockNum == 4634748 {
 		database.users[common.HexToAddress("0x36928500bc1dcd7af6a2b4008875cc336b927d57")] = &model.USDTUser{
 			Amount: 100000000000,
 		}
@@ -116,8 +118,10 @@ func New() *Database {
 		}
 	} else {
 		database.dayStatOfUSDT = database.GetERC20DayStat("-")
+		database.dayStatOfUSDT.Date = database.trackedDate
 		database.historicalHolder = database.dayStatOfUSDT.HistoricalHolder
 	}
+	database.buildEndBlockNumMap()
 
 	return database
 }
@@ -149,6 +153,26 @@ func (db *Database) loadUsers() {
 	fmt.Printf("Loaded [%d] of [%d] users from db\n", len(db.users), result.RowsAffected)
 }
 
+func (db *Database) buildEndBlockNumMap() {
+	currentDay, _ := time.Parse(db.trackedDate, "060102")
+
+	for {
+		nextDayStartBlockNum, err := net.EthBlockNumberByTime(currentDay.AddDate(0, 0, 1).Unix())
+
+		if err == nil {
+			db.endBlockNumMap[currentDay.Format("060102")] = nextDayStartBlockNum
+			fmt.Printf("Day [%s] end block num [%d]\n", currentDay.Format("060102"), nextDayStartBlockNum)
+			currentDay = currentDay.AddDate(0, 0, 1)
+		} else if errors.Is(err, net.FutureTime) {
+			return
+		} else {
+			fmt.Printf("Error when build start block num map: %s\n", err.Error())
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+}
+
 func (db *Database) Close() {
 	db.flushUsersToDB(true)
 
@@ -156,8 +180,8 @@ func (db *Database) Close() {
 	_ = underDB.Close()
 }
 
-func (db *Database) GetLastTrackedEthBlockNum() uint64 {
-	return db.lastTrackedBlockNum
+func (db *Database) GetTrackedEthBlockNum() uint64 {
+	return db.trackedBlockNum
 }
 
 func (db *Database) GetUsersCount() int {
@@ -175,30 +199,18 @@ func (db *Database) GetERC20DayStat(date string) model.ERC20Statistic {
 }
 
 func (db *Database) SetLastTrackedBlockNum(blockNum uint64) {
-	db.lastTrackedBlockNum = blockNum
+	db.trackedBlockNum = blockNum
 
-	if blockNum >= db.nextDayStartBlockNum { // Catching up
-		currentDay := db.updateDayStat()
+	endBlockNum, ok := db.endBlockNumMap[db.trackedDate]
 
-		// If we catch up with the current day, we should mark next day's start block number to max
-		if currentDay.Format("060102") == time.Now().Format("060102") {
-			db.nextDayStartBlockNum = 0xffffffffffffffff
-			fmt.Printf("Catch up to today [%s]\n", currentDay)
-			return
-		}
-
-		nextDayStartBlockNum, err := net.EthBlockNumberByTime(currentDay.AddDate(0, 0, 1).Unix())
-
-		if err == nil {
-			db.nextDayStartBlockNum = nextDayStartBlockNum
-			fmt.Printf("Current day [%s] end block num [%d]\n", currentDay.Format("060102"), nextDayStartBlockNum)
-		}
-	} else if db.nextDayStartBlockNum == 0xffffffffffffffff { // Caught up
+	if ok && blockNum >= endBlockNum {
+		db.trackedDate = db.updateDayStat()
+	} else if !ok {
 		header, _ := net.EthGetHeaderByNumber(blockNum)
 		date := generateDate(int64(header.Time))
 
-		if date != db.dayStatOfUSDT.Date {
-			db.updateDayStat()
+		if date != db.trackedDate {
+			db.trackedDate = db.updateDayStat()
 		}
 	}
 }
@@ -282,7 +294,7 @@ func (db *Database) ProcessEthUSDTTransferLog(log types.Log) {
 	}
 
 finish:
-	if log.BlockNumber != db.lastTrackedBlockNum {
+	if log.BlockNumber != db.trackedBlockNum {
 		db.SetLastTrackedBlockNum(log.BlockNumber)
 	}
 }
@@ -313,8 +325,8 @@ func (db *Database) flushUsersToDB(force bool) int {
 	usersToSave := make([]*model.USDTUser, 0)
 
 	if force {
-		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedBlockNumKey}).Update("val", strconv.Itoa(int(db.lastTrackedBlockNum)))
-		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.NextDayStartBlockNum}).Update("val", strconv.Itoa(int(db.nextDayStartBlockNum)))
+		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedBlockNumKey}).Update("val", strconv.Itoa(int(db.trackedBlockNum)))
+		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedDateKey}).Update("val", db.trackedDate)
 		db.dayStatOfUSDT.Date = "-"
 		db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
 		db.db.Save(db.dayStatOfUSDT)
@@ -374,10 +386,10 @@ func (db *Database) saveUsers(users []*model.USDTUser) {
 	}
 	db.db.Save(usersToSave)
 	savedCount += len(usersToSave)
-	fmt.Printf("Finish saving [%d] users", savedCount)
+	fmt.Printf("Finish saving [%d] users\n", savedCount)
 }
 
-func (db *Database) updateDayStat() time.Time {
+func (db *Database) updateDayStat() string {
 	db.historicalHolder += db.dayStatOfUSDT.NewTo
 	db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
 	for _, user := range db.users {
@@ -387,7 +399,7 @@ func (db *Database) updateDayStat() time.Time {
 	}
 	db.db.Save(&db.dayStatOfUSDT)
 
-	lastDay, _ := time.Parse("060102", db.dayStatOfUSDT.Date)
+	lastDay, _ := time.Parse("060102", db.trackedDate)
 	currentDay := lastDay.AddDate(0, 0, 1)
 
 	db.dayStatOfUSDT = model.ERC20Statistic{
@@ -395,7 +407,7 @@ func (db *Database) updateDayStat() time.Time {
 		Address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
 	}
 
-	return currentDay
+	return currentDay.Format("060102")
 }
 
 func generateDate(ts int64) string {
