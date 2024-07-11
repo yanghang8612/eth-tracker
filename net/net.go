@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"strconv"
 
@@ -62,6 +63,7 @@ func EthBlockNumberByTime(timestamp int64) (uint64, error) {
 			}
 			return blockNumber, nil
 		} else {
+			fmt.Println("Etherscan error:", respStruct.Message)
 			return 0, FutureTime
 		}
 	}
