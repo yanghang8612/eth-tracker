@@ -63,7 +63,7 @@ func EthBlockNumberByTime(timestamp int64) (uint64, error) {
 			}
 			return blockNumber, nil
 		} else {
-			fmt.Println("Etherscan error:", respStruct.Message)
+			fmt.Printf("Etherscan error: %s - %s\n", respStruct.Message, respStruct.Result)
 			return 0, FutureTime
 		}
 	}

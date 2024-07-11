@@ -117,8 +117,7 @@ func New() *Database {
 			Address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
 		}
 	} else {
-		database.dayStatOfUSDT = database.GetERC20DayStat("-")
-		database.dayStatOfUSDT.Date = database.trackedDate
+		database.dayStatOfUSDT = database.GetERC20DayStat(database.trackedDate)
 		database.historicalHolder = database.dayStatOfUSDT.HistoricalHolder
 	}
 	database.buildEndBlockNumMap()
@@ -327,9 +326,9 @@ func (db *Database) flushUsersToDB(force bool) int {
 	if force {
 		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedBlockNumKey}).Update("val", strconv.Itoa(int(db.trackedBlockNum)))
 		db.db.Model(&model.Meta{}).Where(model.Meta{Key: model.TrackedDateKey}).Update("val", db.trackedDate)
-		db.dayStatOfUSDT.Date = "-"
+		db.dayStatOfUSDT.Date = db.trackedDate
 		db.dayStatOfUSDT.HistoricalHolder = db.historicalHolder
-		db.db.Save(db.dayStatOfUSDT)
+		db.db.Save(&db.dayStatOfUSDT)
 
 		for addr, user := range db.users {
 			user.Address = addr.Hex()
