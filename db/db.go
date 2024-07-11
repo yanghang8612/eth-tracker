@@ -65,7 +65,7 @@ type Database struct {
 }
 
 func New() *Database {
-	dsn := fmt.Sprintf("root:@tcp(127.0.0.1:3306)/usdt?charset=utf8mb4&parseTime=True&loc=Local")
+	dsn := fmt.Sprintf("root:Root1234!@tcp(127.0.0.1:3306)/usdt?charset=utf8mb4&parseTime=True&loc=Local")
 	db, dbErr := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		SkipDefaultTransaction: true,
 		Logger:                 logger.Discard,
