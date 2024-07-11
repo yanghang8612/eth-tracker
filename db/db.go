@@ -165,7 +165,7 @@ func (db *Database) buildEndBlockNumMap() {
 		} else if errors.Is(err, net.FutureTime) {
 			return
 		} else {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 		}
 	}
 }
