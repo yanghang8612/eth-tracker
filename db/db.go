@@ -164,9 +164,9 @@ func (db *Database) buildEndBlockNumMap() {
 			currentDay = currentDay.AddDate(0, 0, 1)
 		} else if errors.Is(err, net.FutureTime) {
 			return
-		} else {
-			time.Sleep(500 * time.Millisecond)
 		}
+
+		time.Sleep(300 * time.Millisecond)
 	}
 }
 
