@@ -65,7 +65,7 @@ func EthBlockNumberByTime(timestamp int64) (uint64, error) {
 			return blockNumber, nil
 		} else {
 			fmt.Printf("Etherscan error: %s - %s\n", respStruct.Message, respStruct.Result)
-			if strings.Contains(respStruct.Message, "future") {
+			if strings.Contains(respStruct.Result, "future") {
 				return 0, FutureTime
 			}
 			return 0, errors.New(respStruct.Result)
